@@ -40,7 +40,7 @@ For the first stage, we use a [LAION COCO Subset(4M)](https://huggingface.co/dat
 
 After downloading and organizing a dataset, use the following script to obtain a .json file for this datset. Remember to modify the directory and output_path in it.
 ```
-python3 scripts\analyze_tar.py
+python3 scripts/analyze_tar.py
 ```
 
 ### Train first stage model
