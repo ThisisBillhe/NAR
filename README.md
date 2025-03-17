@@ -15,7 +15,7 @@
 
 ## Demo Video
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/pnHADYVLuO4" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+[![YOUTUBE](https://img.youtube.com/vi/pnHADYVLuO4/0.jpg)](https://www.youtube.com/watch?v=pnHADYVLuO4)
 
 ## 🔥 Update
 - [2025.03.17] C2i, t2i, c2v training and sampling code are released !
