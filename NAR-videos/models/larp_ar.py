@@ -58,7 +58,7 @@ class ModelArgs:
 
     max_batch_size: int = 32
     max_seq_len: int = 1024
-    latent_shape: tuple = (4, 16, 16) # TODO: change fixed latent_shape
+    latent_shape: tuple = (4, 16, 16) # fixed latent_shape
 
     attn_num_back = 1
     attn_num_down = 1
@@ -329,12 +329,12 @@ class LARP_AR(nn.Module, PyTorchModelHubMixin):
 
     def setup_diagonal_mask(self, mask, cond_len):
         cur_token, previous_token = [], []
-        T, H, W = self.config.latent_shape
-        for c in range(T + H + W - 2):
+        T, H, W = self.config.latent_shape # timestep, height and width of the token map
+        for c in range(T + H + W - 2): # c is the Manhattan distance from the initial token x0
             cur_token = []
             for t in range(T):
                 for h in range(H):
-                    w = c - t - h
+                    w = c - t - h # obtain coordinates (t, h, w) on the same plane
                     if 0 <= w < W:
                         token_id = cond_len + (t * (H * W) + h * W + w)
                         cur_token.append(token_id)

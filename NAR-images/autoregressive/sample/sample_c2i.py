@@ -11,7 +11,7 @@ from torchvision.utils import save_image
 import time
 import argparse
 import sys
-sys.path.append('place the absolute path of NAR here')
+sys.path.append('place the absolute path of NAR-images here')
 from tokenizer.tokenizer_image.vq_model import VQ_models
 from autoregressive.models.gpt import GPT_models
 from autoregressive.models.generate import generate
@@ -61,8 +61,6 @@ def main(args):
     # if 'freqs_cis' in model_weight:
     #     model_weight.pop('freqs_cis')
     gpt_model.load_state_dict(model_weight, strict=False)
-    # gpt_model.transformerR.load_state_dict(model_weight, strict=False)
-    # gpt_model.transformerB.load_state_dict(model_weight, strict=False)
     gpt_model.eval()
     del checkpoint
     print(f"gpt model is loaded")
@@ -98,7 +96,7 @@ def main(args):
     print(f"decoder takes about {decoder_time:.2f} seconds.")
 
     # Save and display images:
-    save_image(samples, "sample_{}_medusa_attention_12+1_{}.png".format(args.gpt_type, args.gpt_ckpt.split(".")[0].split("/")[-1]), nrow=4, normalize=True, value_range=(-1, 1))
+    save_image(samples, "sample_{}.png".format(args.gpt_type), nrow=4, normalize=True, value_range=(-1, 1))
     print(f"image is saved to sample_{args.gpt_type}.png")
 
 

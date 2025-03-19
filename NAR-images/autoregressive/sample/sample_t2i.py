@@ -1,6 +1,6 @@
 import os
 import sys
-sys.path.append('place the absolute path of NAR here')
+sys.path.append('place the absolute path of NAR-images here')
 
 import torch
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -12,6 +12,7 @@ from torchvision.utils import save_image
 
 import time
 import argparse
+import random
 from tokenizer.tokenizer_image.vq_model import VQ_models
 from language.t5 import T5Embedder
 from autoregressive.models.gpt import GPT_models
@@ -84,13 +85,9 @@ def main(args):
     )
     prompts = [
         "a small house on a mountain top.",
+        "The Imaginary Pure Land of Asia",
+        "Atlantis, the most Fantasy high-quality photos",
         "a long-island ice tea cocktail",
-        "a thumbnail image of a person skiing.",
-        "a sketch of a skyscraper.",
-        "A cityscape at night with a full moon.",
-        "A wood cabin with a fire pit in front of it.",
-        "A crowd of people watching fireworks by a park.",
-        "A steam locomotive speeding through a desert."
     ]
     caption_embs, emb_masks = t5_model.get_text_embeddings(prompts)
 
@@ -113,25 +110,30 @@ def main(args):
 
     qzshape = [len(c_indices), args.codebook_embed_dim, latent_size, latent_size]
 
-    torch.manual_seed(args.seed)
-    t1 = time.time()
-    index_sample = generate(
-        gpt_model, c_indices, latent_size ** 2, 
-        c_emb_masks, 
-        cfg_scale=args.cfg_scale,
-        temperature=args.temperature, top_k=args.top_k,
-        top_p=args.top_p, sample_logits=True, 
-        )
-    sampling_time = time.time() - t1
-    print(f"Full sampling takes about {sampling_time:.2f} seconds.")    
-    
-    t2 = time.time()
-    samples = vq_model.decode_code(index_sample, qzshape) # output value is between [-1, 1]
-    decoder_time = time.time() - t2
-    print(f"decoder takes about {decoder_time:.2f} seconds.")
+    for i in range(5):
+        # torch.manual_seed(args.seed)
+        seed = random.randint(0, 1000)
+        print()
+        print(f'-----------------------------Generate {i+1}th image with a random seed {seed}-----------------------------')
+        torch.manual_seed(seed)
+        t1 = time.time()
+        index_sample = generate(
+            gpt_model, c_indices, latent_size ** 2, 
+            c_emb_masks, 
+            cfg_scale=args.cfg_scale,
+            temperature=args.temperature, top_k=args.top_k,
+            top_p=args.top_p, sample_logits=True, 
+            )
+        sampling_time = time.time() - t1
+        print(f"Full sampling takes about {sampling_time:.2f} seconds.")    
+        
+        t2 = time.time()
+        samples = vq_model.decode_code(index_sample, qzshape) # output value is between [-1, 1]
+        decoder_time = time.time() - t2
+        print(f"decoder takes about {decoder_time:.2f} seconds.")
 
-    save_image(samples, "sample_{}.png".format(args.gpt_type), nrow=4, normalize=True, value_range=(-1, 1))
-    print(f"image is saved to sample_{args.gpt_type}.png")
+        save_image(samples, "sample_{}_seed{}.png".format(args.gpt_type, seed), nrow=4, normalize=True, value_range=(-1, 1))
+        print(f"image is saved to sample_{args.gpt_type}_seed{seed}.png")
 
 
 

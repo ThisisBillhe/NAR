@@ -14,10 +14,9 @@ import os
 import time
 import inspect
 import argparse
-import wandb
 
 import sys
-sys.path.append('place the absolute path of NAR here')
+sys.path.append('place the absolute path of NAR-images here')
 from utils.logger import create_logger
 from utils.distributed import init_distributed_mode
 from utils.ema import update_ema, requires_grad
@@ -69,8 +68,6 @@ def main(args):
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
 
-    if rank == 0:
-        wandb.init(project="Medusa_multi_head")
     # Setup an experiment folder:
     if rank == 0:
         os.makedirs(args.results_dir, exist_ok=True)  # Make results folder (holds all experiment subfolders)
@@ -175,13 +172,14 @@ def main(args):
         logger.info("compiling the model... (may take several minutes)")
         model = torch.compile(model) # requires PyTorch 2.0        
     
+    # Setup proximity_mask for training:
     max_seq_length = model.cls_token_num + model.block_size
-    diagonal_mask = torch.tril(torch.ones(max_seq_length, max_seq_length, dtype=torch.bool))
-    model.setup_diagonal_mask(
-        diagonal_mask[-model.block_size:, -model.block_size:], 
-        model.block_size
+    proximity_mask = torch.tril(torch.ones(max_seq_length, max_seq_length, dtype=torch.bool))
+    model.setup_proximity_mask(
+        proximity_mask[-model.block_size:, -model.block_size:], 
+        model.block_size,
     )
-    diagonal_mask = diagonal_mask.unsqueeze(0).repeat(int(args.global_batch_size // dist.get_world_size()), 1, 1)
+    proximity_mask = proximity_mask.unsqueeze(0).repeat(int(args.global_batch_size // dist.get_world_size()), 1, 1)
 
     model = DDP(model.to(device), device_ids=[args.gpu])
     model.train()  # important! This enables embedding dropout for classifier-free guidance
@@ -207,7 +205,7 @@ def main(args):
             c_indices = y.reshape(-1)
             assert z_indices.shape[0] == c_indices.shape[0]
             with torch.cuda.amp.autocast(dtype=ptdtype):  
-                _, loss = model(cond_idx=c_indices, idx=z_indices, targets=z_indices, mask=diagonal_mask)
+                _, loss = model(cond_idx=c_indices, idx=z_indices, targets=z_indices, mask=proximity_mask)  # pass in proximity_mask to overwrite the default causal mask
             # backward pass, with gradient scaling if training in fp16         
             scaler.scale(loss).backward()
             if args.max_grad_norm != 0.0:
@@ -235,8 +233,6 @@ def main(args):
                 dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
                 avg_loss = avg_loss.item() / dist.get_world_size()
                 logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}, lr: {scheduler.get_last_lr()[0]:.6f}")
-                if rank == 0:
-                    wandb.log({ "loss": avg_loss, "Steps/Sec": round(steps_per_sec, 2) })
                 # Reset monitoring variables:
                 running_loss = 0
                 log_steps = 0

@@ -13,7 +13,7 @@ import os
 from tqdm import tqdm
 
 import sys
-sys.path.append('/root/autodl-tmp/LlamaGen')
+sys.path.append('place the absolute path of NAR-images here')
 from utils.distributed import init_distributed_mode
 from dataset.augmentation import center_crop_arr
 from dataset.build import build_dataset

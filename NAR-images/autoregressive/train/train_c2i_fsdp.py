@@ -22,7 +22,7 @@ import contextlib
 from glob import glob
 import wandb
 import sys
-sys.path.append('place the absolute path of NAR here')
+sys.path.append('place the absolute path of NAR-images here')
 
 from utils.logger import create_logger
 from dataset.build import build_dataset

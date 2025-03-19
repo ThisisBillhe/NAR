@@ -2,7 +2,7 @@
 #   fast-DiT: https://github.com/chuanyangjin/fast-DiT
 #   nanoGPT: https://github.com/karpathy/nanoGPT
 import sys
-sys.path.append('place the absolute path of NAR here')
+sys.path.append('place the absolute path of NAR-images here')
 import torch
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True

@@ -56,30 +56,20 @@ def top_k_top_p_filtering(
     return logits
 
 
-def sample(all_logits, temperature: float=1.0, top_k: int=0, top_p: float=1.0, sample_logits=True):        
-    accept_token_num = all_logits.shape[1]
-    all_idx = []
-    for i in range(accept_token_num):
-        logits = all_logits[:, i, :] / max(temperature, 1e-5)
+def sample(logits, temperature: float=1.0, top_k: int=0, top_p: float=1.0, sample_logits=True):        
+    idx = []
+    for i in range(logits.shape[1]): # logits shape: (bsz, seq_len, dim)
+        one_logits = logits[:, i, :] / max(temperature, 1e-5)
         if top_k > 0 or top_p < 1.0:
-            logits = top_k_top_p_filtering(logits, top_k=top_k, top_p=top_p)
-        probs = F.softmax(logits, dim=-1)
+            one_logits = top_k_top_p_filtering(one_logits, top_k=top_k, top_p=top_p)
+        probs = F.softmax(one_logits, dim=-1)
         if sample_logits:
-            idx = torch.multinomial(probs, num_samples=1)
+            one_idx = torch.multinomial(probs, num_samples=1)
         else:
-            _, idx = torch.topk(probs, k=1, dim=-1)
-        all_idx.append(idx.view(-1, 1))
-    all_idx = torch.cat(all_idx, dim=-1)
-
-    return all_idx
-
-
-def logits_to_probs(logits, temperature: float = 1.0, top_p: float=1.0, top_k: int = None, **kwargs):
-    logits = logits / max(temperature, 1e-5)
-    if top_k > 0 or top_p < 1.0:
-        logits = top_k_top_p_filtering(logits, top_k=top_k, top_p=top_p)
-    probs = torch.nn.functional.softmax(logits, dim=-1)
-    return probs
+            _, one_idx = torch.topk(probs, k=1, dim=-1)
+        idx.append(one_idx.view(-1, 1))
+    idx = torch.cat(idx, dim=-1)
+    return idx
 
 
 def prefill(model, cond_idx: torch.Tensor, input_pos: torch.Tensor, cfg_scale: float, **sampling_kwargs):
@@ -94,23 +84,7 @@ def prefill(model, cond_idx: torch.Tensor, input_pos: torch.Tensor, cfg_scale: f
     return sample(logits, **sampling_kwargs)
 
 
-def decode_one_token(model, x: torch.Tensor, input_pos: torch.Tensor, cfg_scale: float, cfg_flag: bool, **sampling_kwargs):
-    assert input_pos.shape[-1] == 1
-    if cfg_scale > 1.0:
-        x_combined = torch.cat([x, x])
-        logits, _ = model(x_combined, cond_idx=None, input_pos=input_pos)
-        logits_combined = logits
-        cond_logits, uncond_logits = torch.split(logits_combined, len(logits_combined) // 2, dim=0) 
-        if cfg_flag:
-            logits = uncond_logits + (cond_logits - uncond_logits) * cfg_scale
-        else:
-            logits = cond_logits
-    else:
-        logits, _ = model(x, cond_idx=None, input_pos=input_pos)
-    return sample(logits, **sampling_kwargs)
-
-
-def decode_diagonal_token(
+def decode_proximity_tokens(
     model,
     x: torch.Tensor,
     input_pos: torch.Tensor,
@@ -120,7 +94,6 @@ def decode_diagonal_token(
     accept_first_last: bool,
     **sampling_kwargs
 ):
-    # assert input_pos.shape[-1] == 1
     if cfg_scale > 1.0:
         x_combined = torch.cat([x, x])
         logits, _ = model(x_combined, cond_idx=None, input_pos=input_pos, accept_first_last=accept_first_last)
@@ -136,37 +109,45 @@ def decode_diagonal_token(
 
 
 def decode_n_tokens(
-    model, cur_token: torch.Tensor, input_pos: torch.Tensor, num_new_tokens: int, 
-    cfg_scale: float, cfg_interval: int,
+    model, 
+    cur_token: torch.Tensor, 
+    input_pos: torch.Tensor,
+    cfg_scale: float, 
+    cfg_interval: int, 
     grid_size: int,
     **sampling_kwargs):
+
+    # Prepare a n x n token array for newly generated tokens
     new_tokens = [[] for _ in range(grid_size)]
     new_tokens[0].append(cur_token)
 
     cfg_flag = True
-    tot_diagonal_num = 2 * grid_size - 1
-    token_num = 1
+    iteations = 2 * grid_size - 1
+    generated_token_num = 1
     bias = input_pos.item()
 
-    for diagonal in tqdm(range(1, tot_diagonal_num)):
+    for itera in tqdm(range(1, iteations)):
         with sdpa_kernel(SDPBackend.MATH): # Actually better for Inductor to codegen attention here
-            accept_token_num = diagonal + 1 if diagonal < grid_size else tot_diagonal_num - diagonal
-            if cfg_interval > -1 and token_num > cfg_interval:
+            accept_token_num = itera + 1 if itera < grid_size else iteations - itera
+            if cfg_interval > -1 and generated_token_num > cfg_interval:
                 cfg_flag = False
             
-            next_token = decode_diagonal_token(
-                model, cur_token, input_pos, cfg_scale, cfg_flag, accept_token_num, accept_first_last=diagonal<grid_size, **sampling_kwargs
+            # Generate new tokens of the same proximity 
+            next_token = decode_proximity_tokens(
+                model, cur_token, input_pos, cfg_scale, cfg_flag, accept_token_num, accept_first_last=itera<grid_size, **sampling_kwargs
             )
             cur_token = next_token
 
+            # Setup input_pos for next slash
             input_pos = []
             for i in range(0, grid_size):
-                j = diagonal - i
+                j = itera - i
                 if j < 0 or j >= grid_size:
                     continue
                 input_pos.append(bias + i * grid_size + j)
             input_pos = torch.tensor(input_pos)
 
+            # Append the current generated tokens to the corresponding slash of the n x n token array
             i = 0
             for token_arr in new_tokens:
                 if i >= cur_token.shape[1]:
@@ -175,10 +156,10 @@ def decode_n_tokens(
                     token_arr.append(cur_token[:, i].view(-1, 1))
                     i += 1
 
-            token_num += accept_token_num
+            generated_token_num += accept_token_num
 
     new_tokens = torch.cat([torch.cat(token_arr, dim=-1) for token_arr in new_tokens], dim=-1)
-    return new_tokens[:, 1:], None
+    return new_tokens[:, 1:]
 
 
 @torch.no_grad()
@@ -209,19 +190,19 @@ def generate(model, cond, max_new_tokens, emb_masks=None, cfg_scale=1.0, cfg_int
         max_batch_size_cfg = max_batch_size * 2 if cfg_scale > 1.0 else max_batch_size
         model.setup_caches(max_batch_size=max_batch_size_cfg, max_seq_length=max_seq_length, dtype=model.tok_embeddings.weight.dtype)
     
-    # TODO: change model.diagonal_mask at case `t2i`
+    # Setup proximity_mask for t2i task
     if emb_masks is not None:
         assert emb_masks.shape[0] == max_batch_size
         assert emb_masks.shape[-1] == T
         if cfg_scale > 1.0:
-            model.causal_mask[:, :, :T] = model.causal_mask[:, :, :T] * torch.cat([emb_masks, emb_masks]).unsqueeze(1)
+            model.proximity_mask[:, :, :T] = model.proximity_mask[:, :, :T] * torch.cat([emb_masks, emb_masks]).unsqueeze(1)
         else:
-            model.causal_mask[:, :, :T] = model.causal_mask[:, :, :T] * emb_masks.unsqueeze(1)
+            model.proximity_mask[:, :, :T] = model.proximity_mask[:, :, :T] * emb_masks.unsqueeze(1)
 
-        eye_matrix = torch.eye(model.causal_mask.size(1), model.causal_mask.size(2), device=device)
-        model.causal_mask[:] = model.causal_mask * (1 - eye_matrix) + eye_matrix
+        eye_matrix = torch.eye(model.proximity_mask.size(1), model.proximity_mask.size(2), device=device)
+        model.proximity_mask[:] = model.proximity_mask * (1 - eye_matrix) + eye_matrix
     
-    # create an empty tensor of the expected final shape and fill in the current tokens
+    # Create an empty tensor of the expected final shape and fill in the prefill stage tokens
     seq = torch.empty((max_batch_size, T_new), dtype=torch.int, device=device)
 
     input_pos = torch.arange(0, T, device=device)
@@ -230,7 +211,7 @@ def generate(model, cond, max_new_tokens, emb_masks=None, cfg_scale=1.0, cfg_int
 
     input_pos = torch.tensor([T], device=device, dtype=torch.int)
     grid_size = int(max_new_tokens ** 0.5)
-    generated_tokens, _ = decode_n_tokens(model, next_token, input_pos, max_new_tokens-1, cfg_scale, cfg_interval, grid_size, **sampling_kwargs)
+    generated_tokens = decode_n_tokens(model, next_token, input_pos, cfg_scale, cfg_interval, grid_size, **sampling_kwargs)
     seq[:, T+1:] = generated_tokens
 
     return seq[:, T:]

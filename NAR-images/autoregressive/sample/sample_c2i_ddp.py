@@ -14,7 +14,7 @@ import math
 import argparse
 
 import sys
-sys.path.append('/root/autodl-tmp/LlamaGen')
+sys.path.append('place the absolute path of NAR-images here')
 from tokenizer.tokenizer_image.vq_model import VQ_models
 from autoregressive.models.gpt import GPT_models
 from autoregressive.models.generate import generate

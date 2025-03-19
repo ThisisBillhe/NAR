@@ -321,37 +321,22 @@ class Transformer(nn.Module):
         elif isinstance(module, nn.Embedding):
             module.weight.data.normal_(mean=0.0, std=std)
     
-    def setup_diagonal_mask(self, mask, block_size):
-        grid_size = int(block_size ** 0.5)
-        for token_id in range(block_size):
-            mask[token_id, :] = 0
-            row_id = token_id // grid_size
-            column_id = token_id % grid_size
-
-            t_row_id = row_id
-            t_column_id = column_id
-            while t_row_id >= 0:
-                low = t_row_id * grid_size
-                high = t_row_id * grid_size + min(t_column_id + 1, grid_size)
-                mask[token_id, low: high] = 1
-
-                t_row_id -= 1
-                t_column_id += 1
-
-            t_row_id = row_id
-            t_column_id = column_id
-            while t_row_id < grid_size:
-                low = t_row_id * grid_size
-                high = t_row_id * grid_size + max(t_column_id + 1, 0)
-                mask[token_id, low: high] = 1
-
-                t_row_id += 1
-                t_column_id -= 1
-        return mask
+    def setup_proximity_mask(self, mask, block_size):
+        mask[:, :] = 0 # zero out visual attention mask
+        cur_token, previous_token = [], []
+        H, W = int(block_size ** 0.5), int(block_size ** 0.5) # height and width of the token map
+        for c in range(H + W - 1): # c is the Manhattan distance from the initial token x0
+            cur_token = []
+            for h in range(H):
+                w = c - h # obtain coordinates (h, w) on the same slash
+                if 0 <= w < W:
+                    token_id = (h * W + w)
+                    cur_token.append(token_id)
+                    previous_token.append(token_id)
+            for id in cur_token:
+                mask[id, previous_token] = 1
 
     def setup_caches(self, max_batch_size, max_seq_length, dtype):
-        # if self.max_seq_length >= max_seq_length and self.max_batch_size >= max_batch_size:
-        #     return
         head_dim = self.config.dim // self.config.n_head
         max_seq_length = find_multiple(max_seq_length, 8)
         self.max_seq_length = max_seq_length
@@ -361,17 +346,14 @@ class Transformer(nn.Module):
 
         grid_size = int(self.config.block_size ** 0.5)
         assert grid_size * grid_size == self.config.block_size
-        diagonal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool))
+        proximity_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool))
         low = self.cls_token_num
         high = self.cls_token_num + self.config.block_size
-        self.setup_diagonal_mask(
-            diagonal_mask[low: high, low: high], 
-            self.config.block_size
+        self.setup_proximity_mask(
+            proximity_mask[low: high, low: high], 
+            self.config.block_size,
         )
-        self.diagonal_mask = diagonal_mask.unsqueeze(0).repeat(self.max_batch_size, 1, 1)
-
-        causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool))
-        self.causal_mask = causal_mask.unsqueeze(0).repeat(self.max_batch_size, 1, 1)
+        self.proximity_mask = proximity_mask.unsqueeze(0).repeat(self.max_batch_size, 1, 1)
         self.freqs_cis = precompute_freqs_cis_2d(grid_size, self.config.dim // self.config.n_head, self.config.rope_base, self.cls_token_num)
 
     def forward(
@@ -398,8 +380,7 @@ class Transformer(nn.Module):
                 token_embeddings = self.tok_embeddings(idx)
             
             bs = token_embeddings.shape[0]
-            # mask = self.causal_mask[:bs, None, input_pos]
-            mask = self.diagonal_mask[:bs, None, input_pos]
+            mask = self.proximity_mask[:bs, None, input_pos]
             h = self.tok_dropout(token_embeddings)
             self.freqs_cis = self.freqs_cis
         
@@ -417,10 +398,10 @@ class Transformer(nn.Module):
         
         # output layers
         h = self.norm(h)
-        logitsR = self.output(h).float()
+        logitsR = self.output(h).float() # logitsR represents the logits of the token on the right
         # medusa output layers
         medusa_h = self.medusa_norm(medusa_h)
-        logitsB = self.medusa_output(medusa_h).float()
+        logitsB = self.medusa_output(medusa_h).float() # LogitsB represents the logits of the token below
 
         if idx is not None and cond_idx is not None: # training
             logitsR = logitsR[:, self.cls_token_num - 1:]

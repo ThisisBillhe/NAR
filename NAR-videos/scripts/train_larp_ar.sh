@@ -11,7 +11,7 @@ python3 \
     test_dataset.csv_paths.ucf101_val ucf101_val.csv \
     model.name llama-abs-L \
     vae.name larp_tokenizer \
-    vae.checkpoint /root/autodl-tmp/LARP/pretrained_models/LARP-L-long-tokenizer/ \
+    vae.checkpoint /path/to/tokenizer \
     ar.num_samples 32 \
     optimizer.name adamw \
     optimizer.args.weight_decay 0.05 \
