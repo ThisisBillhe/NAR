@@ -110,9 +110,10 @@ def main(args):
 
     qzshape = [len(c_indices), args.codebook_embed_dim, latent_size, latent_size]
 
-    for i in range(5):
+    for i in range(1):
         # torch.manual_seed(args.seed)
-        seed = random.randint(0, 1000)
+        # seed = random.randint(0, 1000)
+        seed = args.seed
         print()
         print(f'-----------------------------Generate {i+1}th image with a random seed {seed}-----------------------------')
         torch.manual_seed(seed)
